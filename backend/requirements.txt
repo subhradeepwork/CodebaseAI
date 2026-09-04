@@ -1,0 +1,8 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+pydantic==2.11.7
+numpy==2.3.2
+tree-sitter==0.25.2
+tree-sitter-language-pack>=1.12.3,<2
+
+pytest==8.4.1
