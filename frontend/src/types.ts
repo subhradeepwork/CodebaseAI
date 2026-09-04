@@ -36,6 +36,13 @@ export type SourceRef = {
   repository_name?: string | null
 }
 
+export type MessageReference = {
+  id: number
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  sequence_number: number
+}
+
 export type Message = {
   id: number
   conversation_id: number
@@ -44,6 +51,8 @@ export type Message = {
   created_at: string
   sequence_number: number
   repository_commit?: string | null
+  referenced_message_id?: number | null
+  reference?: MessageReference | null
   sources?: SourceRef[]
 }
 

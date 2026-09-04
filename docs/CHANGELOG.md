@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0
+
+- Added conversation reference points. Any persisted user or assistant message can be selected as the explicit reference for the next prompt.
+- Added an in-composer reference preview with a clear action and a persisted reference marker on the sent message.
+- Promoted referenced message content into local retrieval and model context so old ideas remain addressable even after conversations grow beyond the normal recent-message window.
+- Preserved reference relationships when opening conversation branches.
+- Added cross-conversation validation so a reference can only target a message from the active conversation.
+- Refined conversation branching so Open in new branch is shown only after assistant responses.
+
 ## 1.1.0
 
 - Added multi-repository conversation context. A primary repository can be combined with additional indexed repositories and queries retrieve evidence across the full saved context.

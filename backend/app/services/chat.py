@@ -12,6 +12,8 @@ from .repository import get_repository, sha256_text
 from .retrieval import build_context, retrieve_many
 
 MAX_CONTEXT_REPOSITORIES = 8
+MAX_REFERENCE_CONTEXT_CHARS = 16_000
+MAX_REFERENCE_RETRIEVAL_CHARS = 6_000
 
 
 def _title_from_text(text: str) -> str:
@@ -197,12 +199,15 @@ def branch_conversation(conversation_id: int, branch_from_message_id: int) -> di
             (conversation_id, int(branch_message["sequence_number"])),
         ).fetchall()
 
+        message_id_map: dict[int, int] = {}
         for message in source_messages:
+            referenced_message_id = message["referenced_message_id"] if "referenced_message_id" in message.keys() else None
+            copied_reference_id = message_id_map.get(int(referenced_message_id)) if referenced_message_id is not None else None
             copied = conn.execute(
                 """
                 INSERT INTO messages(
-                    conversation_id,role,content,created_at,sequence_number,repository_commit
-                ) VALUES (?,?,?,?,?,?)
+                    conversation_id,role,content,created_at,sequence_number,repository_commit,referenced_message_id
+                ) VALUES (?,?,?,?,?,?,?)
                 """,
                 (
                     branched_id,
@@ -211,9 +216,11 @@ def branch_conversation(conversation_id: int, branch_from_message_id: int) -> di
                     message["created_at"],
                     int(message["sequence_number"]),
                     message["repository_commit"],
+                    copied_reference_id,
                 ),
             )
             copied_message_id = int(copied.lastrowid)
+            message_id_map[int(message["id"])] = copied_message_id
             fts_insert_message(
                 conn,
                 copied_message_id,
@@ -273,8 +280,26 @@ def get_messages(conversation_id: int) -> list[dict]:
         rows = conn.execute("SELECT * FROM messages WHERE conversation_id=? ORDER BY sequence_number", (conversation_id,)).fetchall()
         out: list[dict] = []
         current_hash_cache: dict[tuple[int, str], str | None] = {}
+        message_by_id = {int(r["id"]): r for r in rows}
         for row in rows:
             item = dict(row)
+            reference = None
+            referenced_message_id = item.get("referenced_message_id")
+            if referenced_message_id is not None:
+                referenced = message_by_id.get(int(referenced_message_id))
+                if referenced is None:
+                    referenced = conn.execute(
+                        "SELECT id,role,content,sequence_number FROM messages WHERE id=? AND conversation_id=?",
+                        (int(referenced_message_id), conversation_id),
+                    ).fetchone()
+                if referenced:
+                    reference = {
+                        "id": int(referenced["id"]),
+                        "role": referenced["role"],
+                        "content": referenced["content"],
+                        "sequence_number": int(referenced["sequence_number"]),
+                    }
+            item["reference"] = reference
             srcs = conn.execute(
                 "SELECT repository_id,path,start_line,end_line,file_hash,score,kind FROM message_sources WHERE message_id=? ORDER BY score DESC,id",
                 (row["id"],),
@@ -307,12 +332,12 @@ def get_messages(conversation_id: int) -> list[dict]:
         return out
 
 
-def _insert_message(conn, conversation_id: int, role: str, content: str, repo_commit: str | None) -> int:
+def _insert_message(conn, conversation_id: int, role: str, content: str, repo_commit: str | None, referenced_message_id: int | None = None) -> int:
     seq_row = conn.execute("SELECT COALESCE(MAX(sequence_number),0)+1 AS seq FROM messages WHERE conversation_id=?", (conversation_id,)).fetchone()
     seq = int(seq_row["seq"])
     cur = conn.execute(
-        "INSERT INTO messages(conversation_id,role,content,sequence_number,repository_commit) VALUES (?,?,?,?,?)",
-        (conversation_id, role, content, seq, repo_commit),
+        "INSERT INTO messages(conversation_id,role,content,sequence_number,repository_commit,referenced_message_id) VALUES (?,?,?,?,?,?)",
+        (conversation_id, role, content, seq, repo_commit, referenced_message_id),
     )
     mid = int(cur.lastrowid)
     fts_insert_message(conn, mid, conversation_id, role, content)
@@ -327,7 +352,7 @@ def _history_for_model(conn, conversation_id: int) -> list[dict[str, str]]:
     return [{"role": r["role"], "content": r["content"]} for r in reversed(rows) if r["role"] in {"user", "assistant"}]
 
 
-def ask(conversation_id: int, user_text: str) -> dict[str, Any]:
+def ask(conversation_id: int, user_text: str, referenced_message_id: int | None = None) -> dict[str, Any]:
     user_text = user_text.strip()
     if not user_text:
         raise ValueError("Message is empty")
@@ -340,19 +365,45 @@ def ask(conversation_id: int, user_text: str) -> dict[str, Any]:
         if not primary_repo:
             raise ValueError("Repository not found")
         repository_ids = _conversation_repository_ids(conn, conversation_id, int(conv["repository_id"]))
+        referenced_message = None
+        if referenced_message_id is not None:
+            referenced_message = conn.execute(
+                "SELECT id,role,content,sequence_number FROM messages WHERE id=? AND conversation_id=?",
+                (referenced_message_id, conversation_id),
+            ).fetchone()
+            if not referenced_message:
+                raise ValueError("Referenced message not found in this conversation")
         commit = current_commit(Path(primary_repo["path"]))
-        user_id = _insert_message(conn, conversation_id, "user", user_text, commit)
+        user_id = _insert_message(conn, conversation_id, "user", user_text, commit, referenced_message_id)
         if conv["title"] == "New chat":
             conn.execute("UPDATE conversations SET title=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (_title_from_text(user_text), conversation_id))
         else:
             conn.execute("UPDATE conversations SET updated_at=CURRENT_TIMESTAMP WHERE id=?", (conversation_id,))
         history = _history_for_model(conn, conversation_id)
 
-    sources = retrieve_many(repository_ids, user_text, limit=24 if len(repository_ids) > 1 else 18)
+    reference_block = ""
+    retrieval_query = user_text
+    if referenced_message is not None:
+        reference_text = str(referenced_message["content"])
+        reference_role = "AI response" if referenced_message["role"] == "assistant" else "user message"
+        truncated_reference = reference_text[:MAX_REFERENCE_CONTEXT_CHARS]
+        if len(reference_text) > MAX_REFERENCE_CONTEXT_CHARS:
+            truncated_reference += "\n[Reference truncated for model context.]"
+        reference_block = (
+            f"Reference point from earlier in this conversation ({reference_role}, message "
+            f"{int(referenced_message['sequence_number'])}):\n"
+            f"--- BEGIN REFERENCED MESSAGE ---\n{truncated_reference}\n--- END REFERENCED MESSAGE ---\n\n"
+            "The current question explicitly refers to that message. Use it as the primary conversational reference point, "
+            "while still verifying repository-specific claims against the retrieved repository evidence.\n\n"
+        )
+        retrieval_query = f"{user_text}\n\nReferenced conversation message:\n{reference_text[:MAX_REFERENCE_RETRIEVAL_CHARS]}"
+
+    sources = retrieve_many(repository_ids, retrieval_query, limit=24 if len(repository_ids) > 1 else 18)
     context = build_context(sources)
     repo_names = [get_repository(rid)["name"] for rid in repository_ids]
     repo_scope = ", ".join(repo_names)
     prompt = (
+        f"{reference_block}"
         f"Repository question:\n{user_text}\n\n"
         f"Active repository context: {repo_scope}.\n"
         f"Repository evidence follows. Treat it as authoritative for repository-specific facts. "

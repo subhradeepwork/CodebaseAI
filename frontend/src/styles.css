@@ -89,11 +89,15 @@ body.resizing-sidebar .app-shell { transition: none; }
 .message.assistant .message-avatar { background: #e7e7e9; color: #17181a; }
 .message-content { min-width: 0; padding-top: 5px; line-height: 1.62; font-size: 14px; }
 .message-body { min-width: 0; }
-.message-actions { min-height: 22px; margin-top: 9px; display: flex; align-items: center; }
-.branch-message-button { border: 0; background: transparent; color: #71747b; cursor: pointer; padding: 3px 0; font-size: 10px; opacity: .68; transition: color .12s ease, opacity .12s ease; }
-.message:hover .branch-message-button, .branch-message-button:focus-visible { color: #b5b7bc; opacity: 1; }
-.branch-message-button:hover { color: #e0e1e3; }
-.branch-message-button:disabled { opacity: .35; }
+.message-actions { min-height: 22px; margin-top: 9px; display: flex; align-items: center; gap: 14px; }
+.branch-message-button, .reference-message-button { border: 0; background: transparent; color: #71747b; cursor: pointer; padding: 3px 0; font-size: 10px; opacity: .68; transition: color .12s ease, opacity .12s ease; }
+.message:hover .branch-message-button, .branch-message-button:focus-visible, .message:hover .reference-message-button, .reference-message-button:focus-visible { color: #b5b7bc; opacity: 1; }
+.branch-message-button:hover, .reference-message-button:hover { color: #e0e1e3; }
+.branch-message-button:disabled, .reference-message-button:disabled { opacity: .35; cursor: default; }
+.message-reference { width: min(660px, 100%); margin: 0 0 10px; padding: 8px 10px; border: 1px solid #303238; border-left: 2px solid #666a72; border-radius: 8px; background: #1d1f22; color: inherit; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 3px; }
+.message-reference:hover { background: #222428; border-color: #3b3e44; border-left-color: #888c95; }
+.message-reference-label { color: #91949b; font-size: 9px; font-weight: 650; text-transform: uppercase; letter-spacing: .055em; }
+.message-reference-text { color: #aaaeb5; font-size: 10.5px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .prose { white-space: pre-wrap; overflow-wrap: anywhere; }
 .code-block { background: #101113; border: 1px solid #2b2d31; border-radius: 9px; overflow-x: auto; padding: 12px 14px; font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; line-height: 1.55; margin: 12px 0; color: #dedfe3; }
 .sources { margin-top: 16px; }
@@ -115,9 +119,16 @@ body.resizing-sidebar .app-shell { transition: none; }
 .suggestions { margin-top: 18px; width: min(680px,100%); display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; }
 .suggestions button { background: #1e2023; border: 1px solid #2e3035; color: #b9bbc1; border-radius: 10px; padding: 13px; text-align: left; cursor: pointer; font-size: 12px; }
 .composer-wrap { width: min(900px, calc(100% - 48px)); margin: 0 auto; padding: 8px 0 max(14px, env(safe-area-inset-bottom)); background: #191a1d; flex: 0 0 auto; position: relative; z-index: 10; }
-.composer { background: #232428; border: 1px solid #36383d; border-radius: 14px; padding: 9px 10px 9px 14px; display: flex; align-items: flex-end; gap: 9px; box-shadow: 0 8px 28px rgba(0,0,0,.16); }
+.composer { background: #232428; border: 1px solid #36383d; border-radius: 14px; padding: 9px 10px 9px 14px; display: flex; flex-direction: column; gap: 7px; box-shadow: 0 8px 28px rgba(0,0,0,.16); }
 .composer:focus-within { border-color: #4c4f56; }
+.composer-input-row { width: 100%; display: flex; align-items: flex-end; gap: 9px; }
 .composer textarea { flex: 1; resize: none; max-height: 170px; min-height: 25px; background: transparent; color: #efeff1; outline: none; border: 0; line-height: 1.5; padding: 4px 0; }
+.composer-reference { width: 100%; min-width: 0; border-bottom: 1px solid #34363b; padding: 1px 0 8px; display: flex; align-items: flex-start; gap: 10px; }
+.composer-reference-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; border-left: 2px solid #747880; padding-left: 9px; }
+.composer-reference-label { color: #a9acb3; font-size: 9px; font-weight: 650; text-transform: uppercase; letter-spacing: .055em; }
+.composer-reference-text { color: #b9bcc2; font-size: 10.5px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-reference-clear { flex: 0 0 auto; width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent; color: #888b92; cursor: pointer; font-size: 16px; line-height: 1; }
+.composer-reference-clear:hover { background: #303237; color: #e2e3e5; }
 .composer textarea::placeholder { color: #767980; }
 .send-button { border: 0; background: #e7e7e9; color: #18191b; border-radius: 9px; padding: 8px 12px; font-size: 11px; font-weight: 700; cursor: pointer; }
 .composer-note { text-align: center; color: #666970; font-size: 9px; margin-top: 7px; }

@@ -37,10 +37,32 @@ def test_open_in_new_branch_action_is_wired_to_branch_api():
     css = (root / "frontend" / "src" / "styles.css").read_text(encoding="utf-8")
 
     assert "Open in new branch" in app
-    assert "conversationId && m.id > 0 && m.role === 'assistant'" in app
-    assert "m.role !== 'system'" not in app
+    assert "conversationId && m.id > 0 && m.role !== 'system'" in app
+    assert "{m.role === 'assistant' && (" in app
     assert "openInNewBranch" in app
     assert "branchConversation" in app
     assert "/branch`" in api
     assert "branch_from_message_id" in api
     assert ".branch-message-button" in css
+
+
+
+def test_reference_point_action_composer_preview_and_api_are_wired():
+    root = Path(__file__).resolve().parents[2]
+    app = (root / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
+    api = (root / "frontend" / "src" / "api.ts").read_text(encoding="utf-8")
+    css = (root / "frontend" / "src" / "styles.css").read_text(encoding="utf-8")
+    types = (root / "frontend" / "src" / "types.ts").read_text(encoding="utf-8")
+
+    assert "Refer to this message in your next prompt" in app
+    assert "m.role !== 'system'" in app
+    assert "useAsReference" in app
+    assert "referencedMessage" in app
+    assert "composer-reference" in app
+    assert "message-reference" in app
+    assert "activeReference?.id ?? null" in app
+    assert "referenced_message_id" in api
+    assert "referencedMessageId" in api
+    assert "MessageReference" in types
+    assert ".composer-reference" in css
+    assert ".reference-message-button" in css

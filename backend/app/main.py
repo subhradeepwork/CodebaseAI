@@ -198,7 +198,7 @@ def conversation_messages(conversation_id: int) -> list[dict]:
 @app.post("/api/conversations/{conversation_id}/messages")
 def conversation_ask(conversation_id: int, body: MessageCreate) -> dict:
     try:
-        return ask(conversation_id, body.content)
+        return ask(conversation_id, body.content, body.referenced_message_id)
     except LLMUnavailable as e:
         raise HTTPException(
             status_code=503,

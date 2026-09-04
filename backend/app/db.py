@@ -149,7 +149,8 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     sequence_number INTEGER NOT NULL,
-    repository_commit TEXT
+    repository_commit TEXT,
+    referenced_message_id INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_sequence ON messages(conversation_id, sequence_number);
 
@@ -188,6 +189,10 @@ def init_db(db_path: Path | None = None) -> None:
         source_columns = {r["name"] for r in conn.execute("PRAGMA table_info(message_sources)").fetchall()}
         if "repository_id" not in source_columns:
             conn.execute("ALTER TABLE message_sources ADD COLUMN repository_id INTEGER")
+
+        message_columns = {r["name"] for r in conn.execute("PRAGMA table_info(messages)").fetchall()}
+        if "referenced_message_id" not in message_columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN referenced_message_id INTEGER")
 
         conversation_columns = {r["name"] for r in conn.execute("PRAGMA table_info(conversations)").fetchall()}
         if "parent_conversation_id" not in conversation_columns:

@@ -227,3 +227,96 @@ def test_branch_conversation_rejects_message_from_another_chat(monkeypatch, tmp_
         assert False, "Expected ValueError"
     except ValueError as exc:
         assert "Branch message not found" in str(exc)
+
+
+
+def test_reference_point_is_persisted_and_promoted_into_model_context(monkeypatch, tmp_path: Path):
+    use_temp_db(monkeypatch, tmp_path)
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    (repo_dir / "service.ts").write_text("export const loadCustomer = () => fetch('/api/customer')\n", encoding="utf-8")
+    repo = add_repository(str(repo_dir))
+    index_repository(repo["id"], embeddings=False)
+    conv = chatmod.create_conversation(repo["id"])
+
+    with db_conn() as conn:
+        chatmod._insert_message(conn, conv["id"], "user", "How should customer loading work?", "abc123")
+        reference_id = chatmod._insert_message(
+            conn,
+            conv["id"],
+            "assistant",
+            "Use loadCustomer in service.ts and keep transformation in the service layer.",
+            "abc123",
+        )
+
+    captured = {}
+
+    def fake_retrieve(ids, query, limit):
+        captured["retrieval_query"] = query
+        return []
+
+    def fake_chat(self, messages):
+        captured["model_messages"] = messages
+        return "That referenced approach can be extended safely."
+
+    monkeypatch.setattr(chatmod, "retrieve_many", fake_retrieve)
+    monkeypatch.setattr(chatmod.LLMClient, "chat", fake_chat)
+
+    result = chatmod.ask(conv["id"], "What if we also need caching?", reference_id)
+    assert result["user_message_id"] > 0
+    assert "Use loadCustomer in service.ts" in captured["retrieval_query"]
+    prompt = captured["model_messages"][-1]["content"]
+    assert "Reference point from earlier in this conversation" in prompt
+    assert "Use loadCustomer in service.ts" in prompt
+    assert "What if we also need caching?" in prompt
+
+    messages = chatmod.get_messages(conv["id"])
+    referenced_user = [m for m in messages if m["id"] == result["user_message_id"]][0]
+    assert referenced_user["referenced_message_id"] == reference_id
+    assert referenced_user["reference"]["id"] == reference_id
+    assert referenced_user["reference"]["role"] == "assistant"
+    assert "transformation in the service layer" in referenced_user["reference"]["content"]
+
+
+def test_reference_point_rejects_message_from_another_conversation(monkeypatch, tmp_path: Path):
+    use_temp_db(monkeypatch, tmp_path)
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    repo = add_repository(str(repo_dir))
+    first = chatmod.create_conversation(repo["id"])
+    second = chatmod.create_conversation(repo["id"])
+    with db_conn() as conn:
+        foreign_id = chatmod._insert_message(conn, second["id"], "assistant", "foreign answer", None)
+
+    try:
+        chatmod.ask(first["id"], "Refer to that", foreign_id)
+        assert False, "Expected ValueError"
+    except ValueError as exc:
+        assert "Referenced message not found" in str(exc)
+
+    with db_conn() as conn:
+        count = conn.execute("SELECT COUNT(*) AS n FROM messages WHERE conversation_id=?", (first["id"],)).fetchone()["n"]
+    assert count == 0
+
+
+def test_branch_preserves_reference_point_relationship(monkeypatch, tmp_path: Path):
+    use_temp_db(monkeypatch, tmp_path)
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    repo = add_repository(str(repo_dir))
+    conv = chatmod.create_conversation(repo["id"], title="Reference branch")
+
+    with db_conn() as conn:
+        first_user = chatmod._insert_message(conn, conv["id"], "user", "Initial question", None)
+        first_answer = chatmod._insert_message(conn, conv["id"], "assistant", "Initial answer", None)
+        follow_up = chatmod._insert_message(conn, conv["id"], "user", "Expand this idea", None, first_answer)
+        branch_point = chatmod._insert_message(conn, conv["id"], "assistant", "Expanded answer", None)
+
+    branch = chatmod.branch_conversation(conv["id"], branch_point)
+    branched_messages = chatmod.get_messages(branch["id"])
+    copied_first_answer = branched_messages[1]
+    copied_follow_up = branched_messages[2]
+    assert copied_follow_up["reference"] is not None
+    assert copied_follow_up["reference"]["id"] == copied_first_answer["id"]
+    assert copied_follow_up["reference"]["content"] == "Initial answer"
+    assert copied_follow_up["referenced_message_id"] == copied_first_answer["id"]

@@ -25,6 +25,7 @@ class ConversationBranchCreate(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=100_000)
+    referenced_message_id: int | None = Field(default=None, gt=0)
 
 
 class IndexRequest(BaseModel):

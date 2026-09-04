@@ -80,6 +80,7 @@ function App() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [conversationId, setConversationId] = useState<number | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
+  const [referencedMessage, setReferencedMessage] = useState<Message | null>(null)
   const [input, setInput] = useState('')
   const [search, setSearch] = useState('')
   const [busy, setBusy] = useState(false)
@@ -96,6 +97,7 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem('codebase-ai-sidebar-collapsed') === '1')
   const resizingRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const composerInputRef = useRef<HTMLTextAreaElement | null>(null)
 
   const repo = useMemo(() => repos.find(r => r.id === repoId) || null, [repos, repoId])
   const conversation = useMemo(() => conversations.find(c => c.id === conversationId) || null, [conversations, conversationId])
@@ -125,11 +127,13 @@ function App() {
       setConversations([])
       setConversationId(null)
       setMessages([])
+      setReferencedMessage(null)
       return
     }
     setContextRepoIds([repoId])
     setConversationId(null)
     setMessages([])
+    setReferencedMessage(null)
     refreshConversations(repoId, '').catch(e => setError(e.message))
   }, [repoId])
 
@@ -238,12 +242,14 @@ function App() {
       setConversationId(c.id)
       setContextRepoIds(c.repository_ids || ids)
       setMessages([])
+      setReferencedMessage(null)
     } catch (e: any) { setError(e.message) }
   }
 
   async function openConversation(c: Conversation) {
     setConversationId(c.id)
     setContextRepoIds(uniqueIds([c.repository_id, ...(c.repository_ids || [])]))
+    setReferencedMessage(null)
     setError('')
   }
 
@@ -264,6 +270,7 @@ function App() {
       if (conversationId === c.id) {
         setConversationId(null)
         setMessages([])
+        setReferencedMessage(null)
       }
     } catch (e: any) { setError(e.message) }
   }
@@ -278,12 +285,24 @@ function App() {
       setConversationId(branched.id)
       setContextRepoIds(uniqueIds([branched.repository_id, ...(branched.repository_ids || [])]))
       setMessages(await api.messages(branched.id))
+      setReferencedMessage(null)
       await refreshConversations(repoId, search)
     } catch (e: any) {
       setError(e.message)
     } finally {
       setBranchingMessageId(null)
     }
+  }
+
+  function useAsReference(message: Message) {
+    if (message.id <= 0 || message.role === 'system' || busy) return
+    setReferencedMessage(message)
+    window.requestAnimationFrame(() => composerInputRef.current?.focus())
+  }
+
+  function clearReference() {
+    setReferencedMessage(null)
+    window.requestAnimationFrame(() => composerInputRef.current?.focus())
   }
 
   function openRepositoryContext() {
@@ -331,6 +350,7 @@ function App() {
     if (!text || busy || !repoId) return
     setError('')
     let cid = conversationId
+    const activeReference = referencedMessage
     try {
       if (!cid) {
         const ids = uniqueIds([repoId, ...contextRepoIds])
@@ -343,11 +363,14 @@ function App() {
       const temp: Message = {
         id: -Date.now(), conversation_id: cid!, role: 'user', content: text,
         created_at: new Date().toISOString(), sequence_number: messages.length + 1,
+        referenced_message_id: activeReference?.id ?? null,
+        reference: activeReference ? { id: activeReference.id, role: activeReference.role, content: activeReference.content, sequence_number: activeReference.sequence_number } : null,
       }
       setMessages(prev => [...prev, temp])
       setInput('')
+      setReferencedMessage(null)
       setBusy(true)
-      await api.sendMessage(cid!, text)
+      await api.sendMessage(cid!, text, activeReference?.id ?? null)
       const refreshed = await api.messages(cid!)
       setMessages(refreshed)
       await refreshConversations(repoId, search)
@@ -521,9 +544,15 @@ function App() {
             </div>
           )}
           {messages.map(m => (
-            <article className={`message ${m.role}`} key={m.id}>
+            <article id={m.id > 0 ? `message-${m.id}` : undefined} className={`message ${m.role}`} key={m.id}>
               <div className="message-avatar">{m.role === 'assistant' ? 'AI' : 'You'}</div>
               <div className="message-content">
+                {m.reference && (
+                  <button className="message-reference" onClick={() => document.getElementById(`message-${m.reference!.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })} title="Jump to referenced message">
+                    <span className="message-reference-label">Referenced {m.reference.role === 'assistant' ? 'AI response' : 'user message'}</span>
+                    <span className="message-reference-text">{m.reference.content.replace(/\s+/g, ' ').trim().slice(0, 180)}{m.reference.content.length > 180 ? '…' : ''}</span>
+                  </button>
+                )}
                 <MessageBody text={m.content} />
                 {m.role === 'assistant' && m.sources && m.sources.length > 0 && (
                   <div className="sources">
@@ -537,16 +566,26 @@ function App() {
                     </div>
                   </div>
                 )}
-                {conversationId && m.id > 0 && m.role === 'assistant' && (
+                {conversationId && m.id > 0 && m.role !== 'system' && (
                   <div className="message-actions">
                     <button
-                      className="branch-message-button"
-                      onClick={() => openInNewBranch(m)}
-                      disabled={busy || branchingMessageId != null}
-                      title="Create a new conversation containing the history through this response"
+                      className="reference-message-button"
+                      onClick={() => useAsReference(m)}
+                      disabled={busy}
+                      title="Refer to this message in your next prompt"
                     >
-                      {branchingMessageId === m.id ? 'Opening branch…' : 'Open in new branch'}
+                      Reference
                     </button>
+                    {m.role === 'assistant' && (
+                      <button
+                        className="branch-message-button"
+                        onClick={() => openInNewBranch(m)}
+                        disabled={busy || branchingMessageId != null}
+                        title="Create a new conversation containing the history through this response"
+                      >
+                        {branchingMessageId === m.id ? 'Opening branch…' : 'Open in new branch'}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -561,16 +600,28 @@ function App() {
         </div>
 
         <div className="composer-wrap">
-          <div className="composer">
-            <textarea
-              value={input}
-              disabled={!repo || !allContextReady || busy}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={onComposerKey}
-              placeholder={placeholder}
-              rows={1}
-            />
-            <button className="send-button" disabled={!input.trim() || !allContextReady || busy} onClick={send}>Send</button>
+          <div className={`composer ${referencedMessage ? 'has-reference' : ''}`}>
+            {referencedMessage && (
+              <div className="composer-reference">
+                <div className="composer-reference-copy">
+                  <span className="composer-reference-label">Referencing {referencedMessage.role === 'assistant' ? 'AI response' : 'your message'}</span>
+                  <span className="composer-reference-text">{referencedMessage.content.replace(/\s+/g, ' ').trim().slice(0, 220)}{referencedMessage.content.length > 220 ? '…' : ''}</span>
+                </div>
+                <button className="composer-reference-clear" onClick={clearReference} aria-label="Clear reference" title="Clear reference">×</button>
+              </div>
+            )}
+            <div className="composer-input-row">
+              <textarea
+                ref={composerInputRef}
+                value={input}
+                disabled={!repo || !allContextReady || busy}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={onComposerKey}
+                placeholder={referencedMessage ? 'Ask about the referenced message…' : placeholder}
+                rows={1}
+              />
+              <button className="send-button" disabled={!input.trim() || !allContextReady || busy} onClick={send}>Send</button>
+            </div>
           </div>
           <div className="composer-note">Read-only repository analysis · chats and indexes stay on this Mac</div>
         </div>
