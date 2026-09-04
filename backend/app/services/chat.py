@@ -147,6 +147,113 @@ def delete_conversation(conversation_id: int) -> None:
         conn.execute("DELETE FROM conversations WHERE id=?", (conversation_id,))
 
 
+def branch_conversation(conversation_id: int, branch_from_message_id: int) -> dict:
+    """Create an independent conversation branch through one persisted message.
+
+    The new conversation keeps the same repository context and copies all
+    messages up to and including the selected branch point. Repository evidence
+    attached to copied assistant messages is preserved as well.
+    """
+    with db_conn() as conn:
+        parent = conn.execute("SELECT * FROM conversations WHERE id=?", (conversation_id,)).fetchone()
+        if not parent:
+            raise ValueError("Conversation not found")
+
+        branch_message = conn.execute(
+            "SELECT * FROM messages WHERE id=? AND conversation_id=?",
+            (branch_from_message_id, conversation_id),
+        ).fetchone()
+        if not branch_message:
+            raise ValueError("Branch message not found in this conversation")
+
+        repository_ids = _conversation_repository_ids(conn, conversation_id, int(parent["repository_id"]))
+        base_title = str(parent["title"] or "New chat").strip() or "New chat"
+        suffix = " (branch)"
+        branch_title = base_title if base_title.endswith(suffix) else f"{base_title[:120-len(suffix)]}{suffix}"
+
+        cur = conn.execute(
+            """
+            INSERT INTO conversations(
+                repository_id,title,parent_conversation_id,branch_from_message_id,summary
+            ) VALUES (?,?,?,?,?)
+            """,
+            (
+                int(parent["repository_id"]),
+                branch_title,
+                conversation_id,
+                branch_from_message_id,
+                "",
+            ),
+        )
+        branched_id = int(cur.lastrowid)
+        _set_conversation_repositories(conn, branched_id, int(parent["repository_id"]), repository_ids)
+
+        source_messages = conn.execute(
+            """
+            SELECT * FROM messages
+             WHERE conversation_id=? AND sequence_number<=?
+             ORDER BY sequence_number
+            """,
+            (conversation_id, int(branch_message["sequence_number"])),
+        ).fetchall()
+
+        for message in source_messages:
+            copied = conn.execute(
+                """
+                INSERT INTO messages(
+                    conversation_id,role,content,created_at,sequence_number,repository_commit
+                ) VALUES (?,?,?,?,?,?)
+                """,
+                (
+                    branched_id,
+                    message["role"],
+                    message["content"],
+                    message["created_at"],
+                    int(message["sequence_number"]),
+                    message["repository_commit"],
+                ),
+            )
+            copied_message_id = int(copied.lastrowid)
+            fts_insert_message(
+                conn,
+                copied_message_id,
+                branched_id,
+                str(message["role"]),
+                str(message["content"]),
+            )
+
+            sources = conn.execute(
+                """
+                SELECT repository_id,path,start_line,end_line,file_hash,score,kind
+                  FROM message_sources
+                 WHERE message_id=?
+                 ORDER BY id
+                """,
+                (int(message["id"]),),
+            ).fetchall()
+            for source in sources:
+                conn.execute(
+                    """
+                    INSERT INTO message_sources(
+                        message_id,repository_id,path,start_line,end_line,file_hash,score,kind
+                    ) VALUES (?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        copied_message_id,
+                        source["repository_id"],
+                        source["path"],
+                        int(source["start_line"]),
+                        int(source["end_line"]),
+                        source["file_hash"],
+                        float(source["score"]),
+                        source["kind"],
+                    ),
+                )
+
+        row = conn.execute("SELECT * FROM conversations WHERE id=?", (branched_id,)).fetchone()
+        return _conversation_dict(conn, row)
+
+
 def get_messages(conversation_id: int) -> list[dict]:
     with db_conn() as conn:
         conv = conn.execute("SELECT repository_id FROM conversations WHERE id=?", (conversation_id,)).fetchone()

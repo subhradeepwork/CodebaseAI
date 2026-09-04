@@ -20,6 +20,8 @@ export type Conversation = {
   created_at: string
   updated_at: string
   archived: number
+  parent_conversation_id?: number | null
+  branch_from_message_id?: number | null
 }
 
 export type SourceRef = {

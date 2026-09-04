@@ -12,8 +12,8 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .config import APP_NAME, FRONTEND_DIST, HOST, LLM_MODEL, MLX_BASE_URL, OLLAMA_BASE_URL, EMBEDDING_MODEL
 from .db import db_conn, init_db
-from .models import ConversationCreate, ConversationUpdate, IndexRequest, MessageCreate, RepositoryCreate
-from .services.chat import ask, create_conversation, delete_conversation, get_messages, list_conversations, update_conversation
+from .models import ConversationBranchCreate, ConversationCreate, ConversationUpdate, IndexRequest, MessageCreate, RepositoryCreate
+from .services.chat import ask, branch_conversation, create_conversation, delete_conversation, get_messages, list_conversations, update_conversation
 from .services.embeddings import EmbeddingService
 from .services.indexer import start_index
 from .services.llm import LLMClient, LLMUnavailable
@@ -178,6 +178,14 @@ def conversation_delete(conversation_id: int) -> dict:
     try:
         delete_conversation(conversation_id)
         return {"ok": True}
+    except ValueError as e:
+        raise _http_error(e, 404)
+
+
+@app.post("/api/conversations/{conversation_id}/branch")
+def conversation_branch(conversation_id: int, body: ConversationBranchCreate) -> dict:
+    try:
+        return branch_conversation(conversation_id, body.branch_from_message_id)
     except ValueError as e:
         raise _http_error(e, 404)
 

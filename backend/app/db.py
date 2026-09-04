@@ -189,6 +189,14 @@ def init_db(db_path: Path | None = None) -> None:
         if "repository_id" not in source_columns:
             conn.execute("ALTER TABLE message_sources ADD COLUMN repository_id INTEGER")
 
+        conversation_columns = {r["name"] for r in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+        if "parent_conversation_id" not in conversation_columns:
+            conn.execute("ALTER TABLE conversations ADD COLUMN parent_conversation_id INTEGER")
+        if "branch_from_message_id" not in conversation_columns:
+            conn.execute("ALTER TABLE conversations ADD COLUMN branch_from_message_id INTEGER")
+        if "summary" not in conversation_columns:
+            conn.execute("ALTER TABLE conversations ADD COLUMN summary TEXT NOT NULL DEFAULT ''")
+
         # Every legacy conversation had exactly one repository. Seed the new
         # many-repository context table without changing existing chat history.
         conn.execute(

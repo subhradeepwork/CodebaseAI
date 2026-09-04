@@ -24,3 +24,5 @@ def test_schema_message_fts_and_multi_repository_tables(tmp_path: Path):
         assert hit is not None
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(message_sources)").fetchall()}
         assert "repository_id" in cols
+        conversation_cols = {row["name"] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+        assert {"parent_conversation_id", "branch_from_message_id", "summary"}.issubset(conversation_cols)

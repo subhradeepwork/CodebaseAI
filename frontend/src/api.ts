@@ -28,6 +28,7 @@ export const api = {
   renameConversation: (id: number, title: string) => request<Conversation>(`/api/conversations/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   updateConversationRepositories: (id: number, repositoryIds: number[]) => request<Conversation>(`/api/conversations/${id}`, { method: 'PATCH', body: JSON.stringify({ repository_ids: repositoryIds }) }),
   deleteConversation: (id: number) => request<{ok: boolean}>(`/api/conversations/${id}`, { method: 'DELETE' }),
+  branchConversation: (id: number, branchFromMessageId: number) => request<Conversation>(`/api/conversations/${id}/branch`, { method: 'POST', body: JSON.stringify({ branch_from_message_id: branchFromMessageId }) }),
   messages: (conversationId: number) => request<Message[]>(`/api/conversations/${conversationId}/messages`),
   sendMessage: (conversationId: number, content: string) => request<{ user_message_id: number; assistant_message_id: number; content: string; sources: any[] }>(`/api/conversations/${conversationId}/messages`, { method: 'POST', body: JSON.stringify({ content }) }),
   file: (repoId: number, path: string, start: number, end: number) => request<{ path: string; start_line: number; end_line: number; lines: {line:number;text:string}[]; hash: string }>(`/api/repositories/${repoId}/file?path=${encodeURIComponent(path)}&start_line=${start}&end_line=${end}`),

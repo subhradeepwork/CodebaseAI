@@ -83,6 +83,7 @@ function App() {
   const [input, setInput] = useState('')
   const [search, setSearch] = useState('')
   const [busy, setBusy] = useState(false)
+  const [branchingMessageId, setBranchingMessageId] = useState<number | null>(null)
   const [error, setError] = useState('')
   const [source, setSource] = useState<SourceRef | null>(null)
   const [showSettings, setShowSettings] = useState(false)
@@ -265,6 +266,24 @@ function App() {
         setMessages([])
       }
     } catch (e: any) { setError(e.message) }
+  }
+
+  async function openInNewBranch(message: Message) {
+    if (!conversationId || message.id <= 0 || busy || branchingMessageId != null) return
+    setError('')
+    setBranchingMessageId(message.id)
+    try {
+      const branched = await api.branchConversation(conversationId, message.id)
+      setConversations(prev => [branched, ...prev.filter(c => c.id !== branched.id)])
+      setConversationId(branched.id)
+      setContextRepoIds(uniqueIds([branched.repository_id, ...(branched.repository_ids || [])]))
+      setMessages(await api.messages(branched.id))
+      await refreshConversations(repoId, search)
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setBranchingMessageId(null)
+    }
   }
 
   function openRepositoryContext() {
@@ -516,6 +535,18 @@ function App() {
                         </button>
                       ))}
                     </div>
+                  </div>
+                )}
+                {conversationId && m.id > 0 && m.role === 'assistant' && (
+                  <div className="message-actions">
+                    <button
+                      className="branch-message-button"
+                      onClick={() => openInNewBranch(m)}
+                      disabled={busy || branchingMessageId != null}
+                      title="Create a new conversation containing the history through this response"
+                    >
+                      {branchingMessageId === m.id ? 'Opening branch…' : 'Open in new branch'}
+                    </button>
                   </div>
                 )}
               </div>

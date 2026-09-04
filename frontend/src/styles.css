@@ -89,6 +89,11 @@ body.resizing-sidebar .app-shell { transition: none; }
 .message.assistant .message-avatar { background: #e7e7e9; color: #17181a; }
 .message-content { min-width: 0; padding-top: 5px; line-height: 1.62; font-size: 14px; }
 .message-body { min-width: 0; }
+.message-actions { min-height: 22px; margin-top: 9px; display: flex; align-items: center; }
+.branch-message-button { border: 0; background: transparent; color: #71747b; cursor: pointer; padding: 3px 0; font-size: 10px; opacity: .68; transition: color .12s ease, opacity .12s ease; }
+.message:hover .branch-message-button, .branch-message-button:focus-visible { color: #b5b7bc; opacity: 1; }
+.branch-message-button:hover { color: #e0e1e3; }
+.branch-message-button:disabled { opacity: .35; }
 .prose { white-space: pre-wrap; overflow-wrap: anywhere; }
 .code-block { background: #101113; border: 1px solid #2b2d31; border-radius: 9px; overflow-x: auto; padding: 12px 14px; font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; line-height: 1.55; margin: 12px 0; color: #dedfe3; }
 .sources { margin-top: 16px; }

@@ -28,3 +28,19 @@ def test_sidebar_resize_collapse_and_repository_context_are_present():
     assert 'className="sidebar-toggle"' in app
     assert 'codebase-ai-sidebar-width' in app
     assert '.sidebar-resizer {' in css
+
+
+def test_open_in_new_branch_action_is_wired_to_branch_api():
+    root = Path(__file__).resolve().parents[2]
+    app = (root / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
+    api = (root / "frontend" / "src" / "api.ts").read_text(encoding="utf-8")
+    css = (root / "frontend" / "src" / "styles.css").read_text(encoding="utf-8")
+
+    assert "Open in new branch" in app
+    assert "conversationId && m.id > 0 && m.role === 'assistant'" in app
+    assert "m.role !== 'system'" not in app
+    assert "openInNewBranch" in app
+    assert "branchConversation" in app
+    assert "/branch`" in api
+    assert "branch_from_message_id" in api
+    assert ".branch-message-button" in css

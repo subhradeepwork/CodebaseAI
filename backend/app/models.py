@@ -19,6 +19,10 @@ class ConversationUpdate(BaseModel):
     repository_ids: list[int] | None = None
 
 
+class ConversationBranchCreate(BaseModel):
+    branch_from_message_id: int = Field(gt=0)
+
+
 class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=100_000)
 

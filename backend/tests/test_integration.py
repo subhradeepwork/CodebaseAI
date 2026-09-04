@@ -156,3 +156,74 @@ def test_chat_uses_and_persists_sources_from_multiple_repositories(monkeypatch, 
     assistant = [m for m in messages if m["role"] == "assistant"][0]
     assert {s["repository_id"] for s in assistant["sources"]} == {repo_a["id"], repo_b["id"]}
     assert {s["repository_name"] for s in assistant["sources"]} == {repo_a["name"], repo_b["name"]}
+
+
+def test_branch_conversation_copies_history_sources_and_repository_context(monkeypatch, tmp_path: Path):
+    use_temp_db(monkeypatch, tmp_path)
+    repo_a_dir = tmp_path / "repo-a"
+    repo_b_dir = tmp_path / "repo-b"
+    repo_a_dir.mkdir()
+    repo_b_dir.mkdir()
+    source_text = "export const load = () => fetch('/api/data')\n"
+    (repo_a_dir / "client.ts").write_text(source_text, encoding="utf-8")
+    (repo_b_dir / "handler.mjs").write_text("export const handler = async () => 1\n", encoding="utf-8")
+    repo_a = add_repository(str(repo_a_dir))
+    repo_b = add_repository(str(repo_b_dir))
+    conv = chatmod.create_conversation(repo_a["id"], title="Trace data flow", repository_ids=[repo_a["id"], repo_b["id"]])
+
+    with db_conn() as conn:
+        m1 = chatmod._insert_message(conn, conv["id"], "user", "How does data flow?", "abc123")
+        m2 = chatmod._insert_message(conn, conv["id"], "assistant", "It starts in client.ts.", "abc123")
+        conn.execute(
+            "INSERT INTO message_sources(message_id,repository_id,path,start_line,end_line,file_hash,score,kind) VALUES (?,?,?,?,?,?,?,?)",
+            (m2, repo_a["id"], "client.ts", 1, 1, sha256_text(source_text), 0.9, "function"),
+        )
+        m3 = chatmod._insert_message(conn, conv["id"], "user", "What happens next?", "abc123")
+        chatmod._insert_message(conn, conv["id"], "assistant", "This answer should not be copied.", "abc123")
+
+    branch = chatmod.branch_conversation(conv["id"], m3)
+    assert branch["parent_conversation_id"] == conv["id"]
+    assert branch["branch_from_message_id"] == m3
+    assert branch["repository_ids"] == [repo_a["id"], repo_b["id"]]
+    assert branch["title"] == "Trace data flow (branch)"
+
+    branched_messages = chatmod.get_messages(branch["id"])
+    assert [m["content"] for m in branched_messages] == [
+        "How does data flow?",
+        "It starts in client.ts.",
+        "What happens next?",
+    ]
+    assert branched_messages[1]["sources"][0]["path"] == "client.ts"
+    assert branched_messages[1]["sources"][0]["repository_id"] == repo_a["id"]
+
+    with db_conn() as conn:
+        copied_ids = [int(r["id"]) for r in conn.execute("SELECT id FROM messages WHERE conversation_id=? ORDER BY sequence_number", (branch["id"],)).fetchall()]
+        fts_rows = conn.execute(
+            "SELECT rowid FROM messages_fts WHERE conversation_id=? ORDER BY rowid",
+            (branch["id"],),
+        ).fetchall()
+        assert {int(r["rowid"]) for r in fts_rows} == set(copied_ids)
+
+    # The branch is independent: adding to it does not mutate the parent history.
+    with db_conn() as conn:
+        chatmod._insert_message(conn, branch["id"], "assistant", "Branch-only continuation", "abc123")
+        parent_count = conn.execute("SELECT COUNT(*) AS n FROM messages WHERE conversation_id=?", (conv["id"],)).fetchone()["n"]
+        branch_count = conn.execute("SELECT COUNT(*) AS n FROM messages WHERE conversation_id=?", (branch["id"],)).fetchone()["n"]
+    assert parent_count == 4
+    assert branch_count == 4
+
+
+def test_branch_conversation_rejects_message_from_another_chat(monkeypatch, tmp_path: Path):
+    use_temp_db(monkeypatch, tmp_path)
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    repo = add_repository(str(repo_dir))
+    first = chatmod.create_conversation(repo["id"])
+    second = chatmod.create_conversation(repo["id"])
+    with db_conn() as conn:
+        foreign_message = chatmod._insert_message(conn, second["id"], "user", "not in the first chat", None)
+    try:
+        chatmod.branch_conversation(first["id"], foreign_message)
+        assert False, "Expected ValueError"
+    except ValueError as exc:
+        assert "Branch message not found" in str(exc)
