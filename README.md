@@ -6,7 +6,8 @@ The current release is optimized for Apple Silicon and uses a local Qwen coding 
 
 ## Core capabilities
 
-- Open and index a local repository without uploading it.
+- Open and index local repositories without uploading them.
+- Combine multiple repositories in one conversation context for cross-repository questions.
 - Ask natural-language questions about repository structure and implementation.
 - Trace likely flows across frontend, backend, tests, configuration, and Lambda functions.
 - Retrieve code through a hybrid of lexical, structural, symbol, graph, and semantic search.
@@ -14,7 +15,8 @@ The current release is optimized for Apple Silicon and uses a local Qwen coding 
 - Open cited source ranges inside the browser UI.
 - Save multiple conversations locally.
 - Reopen prior conversations from the sidebar and continue them later.
-- Keep chat history associated with the repository it belongs to.
+- Keep chat history associated with its primary repository and persist any additional repositories selected for that conversation.
+- Resize or completely collapse the conversation sidebar; the preference is saved in the browser locally.
 - Record Git commit information with conversation evidence.
 - Incrementally reindex changed, added, and removed files.
 - Run read-only against selected repositories.
@@ -373,10 +375,11 @@ To stop the application and local services started by Codebase AI:
 2. Click `Open local repository`.
 3. Select a repository using the macOS folder picker.
 4. Wait until indexing completes.
-5. Start a conversation or select one of the suggested repository questions.
-6. Click repository evidence in an answer to inspect the cited source range.
-7. Start additional conversations from the sidebar as needed.
-8. Reopen a saved conversation later and continue from where you left off.
+5. Use the `+` button beside the repository selector when a project spans additional repositories. Select existing repositories or open another local repository, then apply the context.
+6. Start a conversation or select one of the suggested repository questions.
+7. Click repository evidence in an answer to inspect the cited source range from the correct repository.
+8. Start additional conversations from the sidebar as needed.
+9. Reopen a saved conversation later and continue from where you left off; its repository context is restored automatically.
 
 ## Persistent chat history
 

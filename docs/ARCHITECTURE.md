@@ -1,65 +1,64 @@
 # Architecture
 
-```text
-Browser / React + TypeScript
-        |
-        | same-origin localhost API
-        v
-FastAPI on 127.0.0.1:8765
-        |
-        +-- Repository scanner
-        |      +-- Git tracked + untracked discovery
-        |      +-- ignore / secret exclusions
-        |      +-- incremental hash tracking
-        |
-        +-- Code parser
-        |      +-- Tree-sitter language pack
-        |      +-- JS/TS/TSX/MJS framework heuristics
-        |      +-- Java/Spring heuristics
-        |      +-- Karate parser
-        |      +-- AWS Lambda / AWS SDK signals
-        |
-        +-- SQLite
-        |      +-- files
-        |      +-- symbols
-        |      +-- code chunks
-        |      +-- FTS5 indexes
-        |      +-- approximate reference edges
-        |      +-- conversations/messages
-        |      +-- message source citations
-        |
-        +-- Hybrid retrieval
-        |      +-- FTS lexical search
-        |      +-- symbol search
-        |      +-- semantic search
-        |      +-- graph expansion
-        |      +-- reciprocal-rank fusion
-        |
-        +-- Ollama 127.0.0.1:11434
-        |      +-- qwen3-embedding:0.6b
-        |
-        +-- MLX-LM 127.0.0.1:8080
-               +-- Qwen3-Coder 30B A3B 4-bit
-```
+Codebase AI is a localhost-only repository intelligence application with four major layers.
 
-## Why symbol-level + file-window chunks
+## Frontend
 
-Only splitting every N characters loses method/class boundaries. Only indexing symbols misses top-level module glue, configuration and executable statements. Codebase AI stores both symbol chunks and overlapping bounded file windows, then fuses retrieval paths.
+The React/TypeScript frontend is served by the FastAPI process in production and communicates only with same-origin `/api` routes.
 
-## Why SQLite
+Primary responsibilities:
 
-SQLite keeps the installation self-contained and local while supporting transactions, relational metadata and FTS5. Embeddings are stored as float32 BLOBs. A per-repository in-memory NumPy matrix accelerates cosine retrieval after first use.
+- repository selection and multi-repository context management
+- persistent conversation navigation
+- conversation deletion and confirmation
+- resizable/collapsible sidebar state
+- chat input and rendering
+- source evidence navigation
+- local runtime status
 
-## Reference graph
+## Backend API
 
-Version 1 builds an approximate graph using uniquely named symbols and identifier references inside symbol chunks. It is deliberately conservative when a symbol name is ambiguous. Tree-sitter provides structural extraction while framework metadata adds higher-level signals.
+FastAPI owns repository registration, indexing requests, chat persistence, local source reading, system status, and static frontend delivery.
 
-A later version can add SCIP/LSP-derived exact cross-references without changing the database/chat/API shape.
+The API binds to `127.0.0.1` by default.
 
-## Chat context
+## Repository intelligence
 
-Full history remains in SQLite. Model calls send only a bounded recent-history window plus the freshly retrieved repository evidence. This prevents very old conversations from consuming the entire model context while preserving every prior message in the UI.
+Each registered repository is indexed independently. The index stores:
 
-## Staleness provenance
+- files and hashes
+- structural symbols
+- source chunks
+- FTS5 text search data
+- approximate reference edges
+- optional semantic embeddings
+- framework and runtime signals
 
-Assistant message source rows record the indexed file hash and repository commit at message time. This gives the database enough provenance for a future UI warning when old source citations no longer match current files.
+A conversation has one primary repository and may persist additional repository IDs in `conversation_repositories`. Retrieval runs against every repository in the saved conversation context, reserves evidence opportunities across repositories, then globally ranks the remaining candidates within a shared context budget.
+
+Source citations retain their originating repository ID, path, line range, and file hash so the UI can open the correct repository and report stale evidence after code changes.
+
+## Retrieval
+
+The retrieval pipeline combines:
+
+1. FTS5 lexical retrieval
+2. symbol-name matching
+3. local semantic embeddings
+4. graph expansion from retrieved symbols
+5. reciprocal-rank-style score fusion
+6. cross-repository evidence balancing when a conversation contains multiple repositories
+
+The resulting source windows are packed into a bounded prompt for the local coding model.
+
+## Local inference
+
+Semantic embeddings are produced through the configured local Ollama service. Answer generation uses the configured local MLX-LM server.
+
+No cloud model fallback is implemented.
+
+## Persistence
+
+SQLite stores repositories, indexes, conversations, messages, conversation-to-repository context, source citations, and application metadata under the Codebase AI application-support directory.
+
+Existing v1.0.x databases are migrated in place at startup. Their original repository is automatically seeded as the primary repository context for each existing conversation.

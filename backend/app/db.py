@@ -133,6 +133,15 @@ CREATE TABLE IF NOT EXISTS conversations (
 );
 CREATE INDEX IF NOT EXISTS idx_conversations_repo_updated ON conversations(repository_id, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS conversation_repositories (
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    repository_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    is_primary INTEGER NOT NULL DEFAULT 0,
+    added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (conversation_id, repository_id)
+);
+CREATE INDEX IF NOT EXISTS idx_conversation_repositories_repo ON conversation_repositories(repository_id, conversation_id);
+
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -154,6 +163,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
 CREATE TABLE IF NOT EXISTS message_sources (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    repository_id INTEGER,
     path TEXT NOT NULL,
     start_line INTEGER NOT NULL,
     end_line INTEGER NOT NULL,
@@ -173,6 +183,32 @@ CREATE TABLE IF NOT EXISTS app_settings (
 def init_db(db_path: Path | None = None) -> None:
     with db_conn(db_path) as conn:
         conn.executescript(SCHEMA)
+
+        # Forward-compatible migrations for databases created by v1.0.x.
+        source_columns = {r["name"] for r in conn.execute("PRAGMA table_info(message_sources)").fetchall()}
+        if "repository_id" not in source_columns:
+            conn.execute("ALTER TABLE message_sources ADD COLUMN repository_id INTEGER")
+
+        # Every legacy conversation had exactly one repository. Seed the new
+        # many-repository context table without changing existing chat history.
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO conversation_repositories(conversation_id,repository_id,is_primary)
+            SELECT id,repository_id,1 FROM conversations
+            """
+        )
+        conn.execute(
+            """
+            UPDATE message_sources
+               SET repository_id = (
+                    SELECT c.repository_id
+                      FROM messages m
+                      JOIN conversations c ON c.id=m.conversation_id
+                     WHERE m.id=message_sources.message_id
+               )
+             WHERE repository_id IS NULL
+            """
+        )
 
 
 def fts_replace_chunk(conn: sqlite3.Connection, chunk_id: int, repository_id: int, path: str, name: str | None, text: str) -> None:

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0
+
+- Added multi-repository conversation context. A primary repository can be combined with additional indexed repositories and queries retrieve evidence across the full saved context.
+- Added repository-aware source citations so evidence opens from the correct repository in multi-repository conversations.
+- Added a draggable sidebar divider with persisted width and a one-click full collapse/expand control.
+- Added database migrations that preserve existing v1.0.x conversations while seeding their original repository into the new conversation context model.
+- Generalized default prompts and documentation so the application remains extensible rather than bounded to a fixed framework list.
+
 ## 1.0.2
 
 - Replaced the chat panel CSS Grid sizing with a viewport-bounded column flex layout so the composer always retains its own visible space after long responses.

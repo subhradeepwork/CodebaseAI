@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 APP_NAME = "Codebase AI"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.1.0"
 HOST = os.getenv("CODEBASE_AI_HOST", "127.0.0.1")
 PORT = int(os.getenv("CODEBASE_AI_PORT", "8765"))
 

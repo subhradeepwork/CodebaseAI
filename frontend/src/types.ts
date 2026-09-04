@@ -15,6 +15,7 @@ export type Repository = {
 export type Conversation = {
   id: number
   repository_id: number
+  repository_ids: number[]
   title: string
   created_at: string
   updated_at: string
@@ -29,6 +30,8 @@ export type SourceRef = {
   kind: string
   stale?: boolean
   file_hash?: string
+  repository_id?: number | null
+  repository_name?: string | null
 }
 
 export type Message = {

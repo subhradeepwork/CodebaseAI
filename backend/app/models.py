@@ -9,12 +9,14 @@ class RepositoryCreate(BaseModel):
 
 class ConversationCreate(BaseModel):
     repository_id: int
+    repository_ids: list[int] | None = None
     title: str | None = None
 
 
 class ConversationUpdate(BaseModel):
     title: str | None = None
     archived: bool | None = None
+    repository_ids: list[int] | None = None
 
 
 class MessageCreate(BaseModel):
@@ -33,6 +35,8 @@ class SourceRef(BaseModel):
     score: float = 0.0
     kind: str = "retrieval"
     stale: bool = False
+    repository_id: int | None = None
+    repository_name: str | None = None
 
 
 class ChatResponse(BaseModel):

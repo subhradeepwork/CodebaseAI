@@ -62,7 +62,7 @@ deactivate
 chmod +x setup.command start.command stop.command verify.command scripts/doctor.py
 
 cat > .setup-complete <<EOF
-Codebase AI 1.0.2
+Codebase AI 1.1.0
 $(date)
 EOF
 

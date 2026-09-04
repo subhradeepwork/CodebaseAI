@@ -13,7 +13,7 @@ MODEL_VENV="${CODEBASE_AI_MLX_VENV:-$HOME/CodebaseAI-ModelTools/.venv}"
 MLX_URL="${CODEBASE_AI_MLX_URL:-http://127.0.0.1:8080}"
 OLLAMA_URL="${CODEBASE_AI_OLLAMA_URL:-http://127.0.0.1:11434}"
 APP_URL="http://127.0.0.1:${CODEBASE_AI_PORT:-8765}"
-EXPECTED_VERSION="1.0.2"
+EXPECTED_VERSION="1.1.0"
 
 if [ ! -f ".setup-complete" ] || [ ! -x ".venv/bin/python" ]; then
   echo "Codebase AI has not been set up yet. Run ./setup.command first."

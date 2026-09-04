@@ -4,15 +4,12 @@ import math
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
 import numpy as np
 
 from ..config import MODEL_CONTEXT_CHAR_BUDGET
 from ..db import db_conn
 from .embeddings import EmbeddingService, EmbeddingUnavailable, embedding_cache
-from .repository import get_repository, read_text_file
 
 
 @dataclass
@@ -26,6 +23,8 @@ class RetrievedSource:
     text: str
     score: float
     file_hash: str | None = None
+    repository_id: int | None = None
+    repository_name: str | None = None
 
 
 def _query_tokens(query: str) -> list[str]:
@@ -64,7 +63,6 @@ def _lexical_candidates(conn, repository_id: int, query: str, limit: int = 30) -
         ).fetchall()
         return [int(r["rowid"]) for r in rows]
     except Exception:
-        # Safe fallback for punctuation-heavy user questions.
         rows = conn.execute(
             "SELECT id FROM chunks WHERE repository_id=? AND lower(text) LIKE ? LIMIT ?",
             (repository_id, f"%{query.lower()[:120]}%", limit),
@@ -151,6 +149,8 @@ def _graph_expand(conn, repository_id: int, seed_chunk_ids: list[int], limit: in
 
 def retrieve(repository_id: int, query: str, limit: int = 12) -> list[RetrievedSource]:
     with db_conn() as conn:
+        repo_row = conn.execute("SELECT name FROM repositories WHERE id=?", (repository_id,)).fetchone()
+        repo_name = repo_row["name"] if repo_row else f"repository-{repository_id}"
         scores: dict[int, float] = defaultdict(float)
         lexical = _lexical_candidates(conn, repository_id, query)
         symbol = _symbol_candidates(conn, repository_id, query)
@@ -186,7 +186,6 @@ def retrieve(repository_id: int, query: str, limit: int = 12) -> list[RetrievedS
             if row is None:
                 continue
             path = row["path"]
-            # Avoid flooding context with overlapping windows from one file.
             if per_path[path] >= 3:
                 continue
             text = row["text"]
@@ -203,6 +202,8 @@ def retrieve(repository_id: int, query: str, limit: int = 12) -> list[RetrievedS
                     text=text,
                     score=float(scores.get(cid, 0.0)),
                     file_hash=row["file_hash"],
+                    repository_id=repository_id,
+                    repository_name=repo_name,
                 )
             )
             used += len(text)
@@ -212,10 +213,63 @@ def retrieve(repository_id: int, query: str, limit: int = 12) -> list[RetrievedS
         return out
 
 
+def retrieve_many(repository_ids: list[int], query: str, limit: int = 24) -> list[RetrievedSource]:
+    """Retrieve evidence across a conversation's repository context.
+
+    Each repository gets a small guaranteed evidence opportunity before the
+    remaining slots are filled globally by score. This keeps a large repository
+    from completely hiding a smaller companion repository while still allowing
+    the strongest evidence to dominate the final context.
+    """
+    ids = list(dict.fromkeys(int(rid) for rid in repository_ids if rid))
+    if not ids:
+        return []
+    if len(ids) == 1:
+        return retrieve(ids[0], query, limit=limit)
+
+    per_repo_limit = max(6, min(14, math.ceil(limit * 1.5 / len(ids)) + 3))
+    buckets = [retrieve(rid, query, limit=per_repo_limit) for rid in ids]
+    selected: list[RetrievedSource] = []
+    seen: set[tuple[int | None, int]] = set()
+    used = 0
+
+    def try_add(source: RetrievedSource) -> bool:
+        nonlocal used
+        key = (source.repository_id, source.chunk_id)
+        if key in seen:
+            return False
+        size = len(source.text)
+        if selected and used + size > MODEL_CONTEXT_CHAR_BUDGET:
+            return False
+        selected.append(source)
+        seen.add(key)
+        used += size
+        return True
+
+    # Guarantee up to two top candidates from each repository when available.
+    for bucket in buckets:
+        for source in bucket[:2]:
+            if len(selected) >= limit:
+                break
+            try_add(source)
+
+    remainder = sorted(
+        (source for bucket in buckets for source in bucket),
+        key=lambda s: (-s.score, s.repository_name or "", s.path, s.start_line),
+    )
+    for source in remainder:
+        if len(selected) >= limit:
+            break
+        try_add(source)
+
+    return selected
+
+
 def build_context(sources: list[RetrievedSource]) -> str:
     parts: list[str] = []
     for i, s in enumerate(sources, start=1):
+        repo_label = s.repository_name or (f"repository-{s.repository_id}" if s.repository_id else "repository")
         parts.append(
-            f"[SOURCE {i}] {s.path}:{s.start_line}-{s.end_line} | kind={s.kind} | symbol={s.name or '-'}\n{s.text.strip()}"
+            f"[SOURCE {i}] repository={repo_label} | {s.path}:{s.start_line}-{s.end_line} | kind={s.kind} | symbol={s.name or '-'}\n{s.text.strip()}"
         )
     return "\n\n".join(parts)

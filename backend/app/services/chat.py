@@ -7,9 +7,11 @@ from typing import Any
 from ..config import RECENT_CHAT_MESSAGES
 from ..db import db_conn, fts_insert_message
 from .git_utils import current_commit
-from .llm import LLMClient, LLMUnavailable
+from .llm import LLMClient
 from .repository import get_repository, sha256_text
-from .retrieval import RetrievedSource, build_context, retrieve
+from .retrieval import build_context, retrieve_many
+
+MAX_CONTEXT_REPOSITORIES = 8
 
 
 def _title_from_text(text: str) -> str:
@@ -18,6 +20,59 @@ def _title_from_text(text: str) -> str:
     if len(cleaned) > 52:
         cleaned = cleaned[:52].rsplit(" ", 1)[0] + "…"
     return cleaned[:1].upper() + cleaned[1:] if cleaned else "New chat"
+
+
+def _normalize_repository_ids(primary_repository_id: int, repository_ids: list[int] | None) -> list[int]:
+    ids = [primary_repository_id]
+    for rid in repository_ids or []:
+        rid = int(rid)
+        if rid not in ids:
+            ids.append(rid)
+    if len(ids) > MAX_CONTEXT_REPOSITORIES:
+        raise ValueError(f"A conversation can use at most {MAX_CONTEXT_REPOSITORIES} repositories")
+    return ids
+
+
+def _validate_repository_ids(conn, repository_ids: list[int]) -> None:
+    if not repository_ids:
+        raise ValueError("At least one repository is required")
+    placeholders = ",".join("?" for _ in repository_ids)
+    rows = conn.execute(f"SELECT id FROM repositories WHERE id IN ({placeholders})", repository_ids).fetchall()
+    found = {int(r["id"]) for r in rows}
+    missing = [rid for rid in repository_ids if rid not in found]
+    if missing:
+        raise ValueError(f"Repository not found: {missing[0]}")
+
+
+def _set_conversation_repositories(conn, conversation_id: int, primary_repository_id: int, repository_ids: list[int]) -> None:
+    repository_ids = _normalize_repository_ids(primary_repository_id, repository_ids)
+    _validate_repository_ids(conn, repository_ids)
+    conn.execute("DELETE FROM conversation_repositories WHERE conversation_id=?", (conversation_id,))
+    for rid in repository_ids:
+        conn.execute(
+            "INSERT INTO conversation_repositories(conversation_id,repository_id,is_primary) VALUES (?,?,?)",
+            (conversation_id, rid, 1 if rid == primary_repository_id else 0),
+        )
+
+
+def _conversation_repository_ids(conn, conversation_id: int, primary_repository_id: int) -> list[int]:
+    rows = conn.execute(
+        "SELECT repository_id FROM conversation_repositories WHERE conversation_id=? ORDER BY is_primary DESC, added_at, repository_id",
+        (conversation_id,),
+    ).fetchall()
+    if not rows:
+        _set_conversation_repositories(conn, conversation_id, primary_repository_id, [primary_repository_id])
+        return [primary_repository_id]
+    ids = [int(r["repository_id"]) for r in rows]
+    if primary_repository_id not in ids:
+        ids.insert(0, primary_repository_id)
+    return ids
+
+
+def _conversation_dict(conn, row) -> dict:
+    item = dict(row)
+    item["repository_ids"] = _conversation_repository_ids(conn, int(row["id"]), int(row["repository_id"]))
+    return item
 
 
 def list_conversations(repository_id: int, search: str | None = None, include_archived: bool = False) -> list[dict]:
@@ -40,21 +95,30 @@ def list_conversations(repository_id: int, search: str | None = None, include_ar
                 "SELECT * FROM conversations WHERE repository_id=? AND (? OR archived=0) ORDER BY updated_at DESC LIMIT 200",
                 (repository_id, 1 if include_archived else 0),
             ).fetchall()
-        return [dict(r) for r in rows]
+        return [_conversation_dict(conn, r) for r in rows]
 
 
-def create_conversation(repository_id: int, title: str | None = None) -> dict:
+def create_conversation(repository_id: int, title: str | None = None, repository_ids: list[int] | None = None) -> dict:
     _ = get_repository(repository_id)
+    ids = _normalize_repository_ids(repository_id, repository_ids)
     with db_conn() as conn:
+        _validate_repository_ids(conn, ids)
         cur = conn.execute(
             "INSERT INTO conversations(repository_id,title) VALUES (?,?)",
             (repository_id, title or "New chat"),
         )
-        row = conn.execute("SELECT * FROM conversations WHERE id=?", (int(cur.lastrowid),)).fetchone()
-        return dict(row)
+        cid = int(cur.lastrowid)
+        _set_conversation_repositories(conn, cid, repository_id, ids)
+        row = conn.execute("SELECT * FROM conversations WHERE id=?", (cid,)).fetchone()
+        return _conversation_dict(conn, row)
 
 
-def update_conversation(conversation_id: int, title: str | None = None, archived: bool | None = None) -> dict:
+def update_conversation(
+    conversation_id: int,
+    title: str | None = None,
+    archived: bool | None = None,
+    repository_ids: list[int] | None = None,
+) -> dict:
     with db_conn() as conn:
         row = conn.execute("SELECT * FROM conversations WHERE id=?", (conversation_id,)).fetchone()
         if not row:
@@ -64,12 +128,19 @@ def update_conversation(conversation_id: int, title: str | None = None, archived
             conn.execute("UPDATE conversations SET title=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (title[:120], conversation_id))
         if archived is not None:
             conn.execute("UPDATE conversations SET archived=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (1 if archived else 0, conversation_id))
+        if repository_ids is not None:
+            ids = _normalize_repository_ids(int(row["repository_id"]), repository_ids)
+            _set_conversation_repositories(conn, conversation_id, int(row["repository_id"]), ids)
+            conn.execute("UPDATE conversations SET updated_at=CURRENT_TIMESTAMP WHERE id=?", (conversation_id,))
         row = conn.execute("SELECT * FROM conversations WHERE id=?", (conversation_id,)).fetchone()
-        return dict(row)
+        return _conversation_dict(conn, row)
 
 
 def delete_conversation(conversation_id: int) -> None:
     with db_conn() as conn:
+        exists = conn.execute("SELECT 1 FROM conversations WHERE id=?", (conversation_id,)).fetchone()
+        if not exists:
+            raise ValueError("Conversation not found")
         mids = conn.execute("SELECT id FROM messages WHERE conversation_id=?", (conversation_id,)).fetchall()
         for m in mids:
             conn.execute("DELETE FROM messages_fts WHERE rowid=?", (int(m["id"]),))
@@ -81,22 +152,34 @@ def get_messages(conversation_id: int) -> list[dict]:
         conv = conn.execute("SELECT repository_id FROM conversations WHERE id=?", (conversation_id,)).fetchone()
         if not conv:
             return []
-        repo = conn.execute("SELECT path FROM repositories WHERE id=?", (conv["repository_id"],)).fetchone()
-        repo_path = Path(repo["path"]).resolve() if repo else None
+        primary_repository_id = int(conv["repository_id"])
+        repo_path_cache: dict[int, Path | None] = {}
+        repo_name_cache: dict[int, str | None] = {}
+
+        def repo_info(repository_id: int) -> tuple[Path | None, str | None]:
+            if repository_id not in repo_path_cache:
+                repo = conn.execute("SELECT path,name FROM repositories WHERE id=?", (repository_id,)).fetchone()
+                repo_path_cache[repository_id] = Path(repo["path"]).resolve() if repo else None
+                repo_name_cache[repository_id] = repo["name"] if repo else None
+            return repo_path_cache[repository_id], repo_name_cache[repository_id]
+
         rows = conn.execute("SELECT * FROM messages WHERE conversation_id=? ORDER BY sequence_number", (conversation_id,)).fetchall()
         out: list[dict] = []
-        current_hash_cache: dict[str, str | None] = {}
+        current_hash_cache: dict[tuple[int, str], str | None] = {}
         for row in rows:
             item = dict(row)
             srcs = conn.execute(
-                "SELECT path,start_line,end_line,file_hash,score,kind FROM message_sources WHERE message_id=? ORDER BY score DESC,id",
+                "SELECT repository_id,path,start_line,end_line,file_hash,score,kind FROM message_sources WHERE message_id=? ORDER BY score DESC,id",
                 (row["id"],),
             ).fetchall()
             rendered = []
             for source in srcs:
                 src = dict(source)
+                repository_id = int(src.get("repository_id") or primary_repository_id)
+                repo_path, repo_name = repo_info(repository_id)
                 path = src["path"]
-                if path not in current_hash_cache:
+                cache_key = (repository_id, path)
+                if cache_key not in current_hash_cache:
                     current_hash: str | None = None
                     if repo_path is not None:
                         try:
@@ -106,8 +189,10 @@ def get_messages(conversation_id: int) -> list[dict]:
                                 current_hash = sha256_text(target.read_text("utf-8", errors="replace"))
                         except Exception:
                             current_hash = None
-                    current_hash_cache[path] = current_hash
-                current_hash = current_hash_cache[path]
+                    current_hash_cache[cache_key] = current_hash
+                current_hash = current_hash_cache[cache_key]
+                src["repository_id"] = repository_id
+                src["repository_name"] = repo_name
                 src["stale"] = bool(src.get("file_hash")) and current_hash != src.get("file_hash")
                 rendered.append(src)
             item["sources"] = rendered
@@ -144,11 +229,11 @@ def ask(conversation_id: int, user_text: str) -> dict[str, Any]:
         conv = conn.execute("SELECT * FROM conversations WHERE id=?", (conversation_id,)).fetchone()
         if not conv:
             raise ValueError("Conversation not found")
-        repo = conn.execute("SELECT * FROM repositories WHERE id=?", (conv["repository_id"],)).fetchone()
-        if not repo:
+        primary_repo = conn.execute("SELECT * FROM repositories WHERE id=?", (conv["repository_id"],)).fetchone()
+        if not primary_repo:
             raise ValueError("Repository not found")
-        repo_path = Path(repo["path"])
-        commit = current_commit(repo_path)
+        repository_ids = _conversation_repository_ids(conn, conversation_id, int(conv["repository_id"]))
+        commit = current_commit(Path(primary_repo["path"]))
         user_id = _insert_message(conn, conversation_id, "user", user_text, commit)
         if conv["title"] == "New chat":
             conn.execute("UPDATE conversations SET title=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (_title_from_text(user_text), conversation_id))
@@ -156,13 +241,17 @@ def ask(conversation_id: int, user_text: str) -> dict[str, Any]:
             conn.execute("UPDATE conversations SET updated_at=CURRENT_TIMESTAMP WHERE id=?", (conversation_id,))
         history = _history_for_model(conn, conversation_id)
 
-    sources = retrieve(int(conv["repository_id"]), user_text, limit=18)
+    sources = retrieve_many(repository_ids, user_text, limit=24 if len(repository_ids) > 1 else 18)
     context = build_context(sources)
+    repo_names = [get_repository(rid)["name"] for rid in repository_ids]
+    repo_scope = ", ".join(repo_names)
     prompt = (
         f"Repository question:\n{user_text}\n\n"
-        f"Current repository evidence follows. Treat it as authoritative for repository-specific facts.\n\n{context or '[No relevant indexed source was retrieved.]'}"
+        f"Active repository context: {repo_scope}.\n"
+        f"Repository evidence follows. Treat it as authoritative for repository-specific facts. "
+        f"When evidence comes from multiple repositories, identify the repository when that distinction matters.\n\n"
+        f"{context or '[No relevant indexed source was retrieved.]'}"
     )
-    # Replace the last user message sent to the model with the augmented grounded prompt, while keeping the persisted transcript clean.
     model_messages = history[:-1] + [{"role": "user", "content": prompt}]
     answer = LLMClient().chat(model_messages)
 
@@ -170,8 +259,8 @@ def ask(conversation_id: int, user_text: str) -> dict[str, Any]:
         assistant_id = _insert_message(conn, conversation_id, "assistant", answer, commit)
         for s in sources:
             conn.execute(
-                "INSERT INTO message_sources(message_id,path,start_line,end_line,file_hash,score,kind) VALUES (?,?,?,?,?,?,?)",
-                (assistant_id, s.path, s.start_line, s.end_line, s.file_hash, s.score, s.kind),
+                "INSERT INTO message_sources(message_id,repository_id,path,start_line,end_line,file_hash,score,kind) VALUES (?,?,?,?,?,?,?,?)",
+                (assistant_id, s.repository_id, s.path, s.start_line, s.end_line, s.file_hash, s.score, s.kind),
             )
         conn.execute("UPDATE conversations SET updated_at=CURRENT_TIMESTAMP WHERE id=?", (conversation_id,))
 
@@ -187,6 +276,8 @@ def ask(conversation_id: int, user_text: str) -> dict[str, Any]:
                 "score": s.score,
                 "kind": s.kind,
                 "stale": False,
+                "repository_id": s.repository_id,
+                "repository_name": s.repository_name,
             }
             for s in sources
         ],

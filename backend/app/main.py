@@ -160,7 +160,7 @@ def conversations(repository_id: int, search: str | None = None, archived: bool 
 @app.post("/api/conversations")
 def conversation_create(body: ConversationCreate) -> dict:
     try:
-        return create_conversation(body.repository_id, body.title)
+        return create_conversation(body.repository_id, body.title, body.repository_ids)
     except (RepositoryError, ValueError) as e:
         raise _http_error(e)
 
@@ -168,7 +168,7 @@ def conversation_create(body: ConversationCreate) -> dict:
 @app.patch("/api/conversations/{conversation_id}")
 def conversation_update(conversation_id: int, body: ConversationUpdate) -> dict:
     try:
-        return update_conversation(conversation_id, body.title, body.archived)
+        return update_conversation(conversation_id, body.title, body.archived, body.repository_ids)
     except ValueError as e:
         raise _http_error(e, 404)
 
