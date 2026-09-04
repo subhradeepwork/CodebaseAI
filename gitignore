@@ -1,0 +1,92 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python environments and caches
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+.eggs/
+
+# Frontend / Node
+frontend/node_modules/
+frontend/dist/
+node_modules/
+dist/
+coverage/
+.npm/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Codebase AI local setup/runtime
+.setup-complete
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+logs/
+pids/
+
+# Distribution artifacts
+*.zip
+MANIFEST.sha256
+
+# Models and large ML artifacts
+models/
+*.gguf
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.crt
+*.cer
+credentials.json
+secrets.json
+
+# Java / Gradle / Maven build output
+.gradle/
+target/
+out/
+*.class
+
+# IDE/editor files
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# Temporary files
+.tmp/
+tmp/
+temp/
+*.log
